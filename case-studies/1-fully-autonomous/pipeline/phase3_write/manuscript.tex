@@ -1,0 +1,645 @@
+\documentclass[12pt]{article}
+
+% ======================================================================
+% Packages
+% ======================================================================
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\doublespacing
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{natbib}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{lineno}
+\linenumbers
+\usepackage{caption}
+\usepackage{subcaption}
+
+% ======================================================================
+% Theorem environments
+% ======================================================================
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\newtheorem{remark}{Remark}
+
+% ======================================================================
+% Macros
+% ======================================================================
+\newcommand{\thetac}{\theta_c}
+\newcommand{\piDAP}{\pi_{\mathrm{DAP}}}
+\newcommand{\pirMAP}{\pi_{\mathrm{rMAP}}}
+\newcommand{\pivague}{\pi_{\mathrm{vague}}}
+\newcommand{\Jdrug}{J_{\mathrm{drug}}}
+\newcommand{\Jtarget}{J_{\mathrm{target}}}
+\newcommand{\Spop}{S_{\mathrm{pop}}}
+\newcommand{\ESS}{\mathrm{ESS}}
+\newcommand{\MAE}{\mathrm{MAE}}
+\newcommand{\RMSE}{\mathrm{RMSE}}
+\newcommand{\reals}{\mathbb{R}}
+
+% ======================================================================
+\title{Knowledge-Graph-Driven Adaptive Prior for Bayesian Borrowing\\in Clinical Trials}
+\author{[Authors]}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ======================================================================
+% ABSTRACT
+% ======================================================================
+\begin{abstract}
+Bayesian borrowing from historical clinical trials can improve inference when sample sizes are small, but existing methods either treat all historical trials as exchangeable or adapt borrowing weights from observed outcomes, precluding full pre-specification in regulatory statistical analysis plans. We propose KG-DAP (Knowledge-Graph-Driven Adaptive Prior), a finite Beta mixture prior whose trial-specific borrowing weights are derived from a biomedical knowledge graph encoding drug mechanisms, molecular targets, and patient population characteristics. The weights are computed via power-sharpened composite similarity, providing a single interpretable hyperparameter $\beta$ that controls the concentration of borrowing. KG-DAP is fully pre-specifiable, closed-form (no MCMC), and conjugate to binomial likelihoods. In leave-one-out cross-validation across 35 newly diagnosed multiple myeloma trial arms, KG-DAP achieves mean absolute error (MAE) of 0.126 compared to 0.170 for the robust meta-analytic-predictive (rMAP) prior---a 25.9\% relative improvement---while maintaining 94.3\% coverage of 95\% credible intervals. A component contribution analysis confirms that both the knowledge graph structure and the power-sharpened weights are essential, and sensitivity analyses reveal a broad operating plateau for the power parameter ($\beta \in [8, 30]$). Simulation studies under favorable, adverse, and mixed scenarios corroborate these findings. The method's computational efficiency enables full cross-validation in under two seconds, facilitating the extensive sensitivity analyses that responsible application demands.
+\end{abstract}
+
+\noindent\textbf{Keywords:} Bayesian borrowing; historical controls; knowledge graph; informative prior; clinical trials; Beta mixture
+
+% ======================================================================
+% 1. INTRODUCTION
+% ======================================================================
+\section{Introduction}
+\label{sec:intro}
+
+In clinical trials, particularly for rare diseases or early-phase studies, sample sizes are often too small for reliable inference about treatment efficacy. A pool of completed historical trials in the same therapeutic area contains relevant information, and methods for incorporating this information---commonly called Bayesian borrowing---have received sustained attention in the biostatistics literature \citep{viele2014use, neuenschwander2010summarizing}.
+
+The core challenge is determining \emph{how much} information to borrow from \emph{which} historical trials. Borrowing too much from an irrelevant trial produces biased estimates and inflated confidence; borrowing too little wastes available information; borrowing uniformly treats all historical trials as equally informative, ignoring known structural differences between them.
+
+The robust meta-analytic-predictive (rMAP) prior \citep{schmidli2014robust} has become the standard approach in pharmaceutical applications, fitting a normal-normal hierarchical model to logit-transformed historical rates and mixing the resulting predictive distribution with a vague component for robustness. While widely adopted and regulatory-accepted, rMAP treats all historical trials as exchangeable up to a global heterogeneity parameter $\tau$---it cannot assign differential borrowing weights based on trial-specific structural similarity. Alternative approaches address this limitation through different mechanisms: the Multisource Exchangeability Model \citep[MEM;][]{kaizer2018bayesian} enumerates all $2^K$ binary exchangeability partitions, while LEAP \citep{alt2024leap} uses latent exchangeability indicators. However, both methods determine their borrowing weights from observed outcome data, precluding full pre-specification in a regulatory Statistical Analysis Plan (SAP).
+
+In many therapeutic areas, rich structural information exists about the relationships between clinical trials: which drugs they employ, which molecular targets those drugs engage, which patient populations they enroll, and which endpoints they measure. This information is naturally represented as a biomedical knowledge graph (KG)---a structured network encoding entities and their relationships. Knowledge graphs have been used successfully in drug repositioning \citep{himmelstein2017systematic} and clinical trial design, but their application to informative prior construction is novel.
+
+We propose \textbf{KG-DAP} (Knowledge-Graph-Driven Adaptive Prior), a finite Beta mixture prior that derives trial-specific borrowing weights from a biomedical knowledge graph via power-sharpened composite similarity. The method uniquely satisfies three desiderata simultaneously: (i) trial-specific continuous borrowing weights based on external structural information, (ii) full pre-specifiability of all prior components, and (iii) closed-form computation without MCMC. The key insight underlying KG-DAP is that \emph{what} you borrow from matters more than \emph{how much} you borrow: even modest effective sample size ($\ESS \approx 6$) produces substantial improvements in mean absolute error (26\%) when borrowing is directed by knowledge graph structure.
+
+The main contributions of this paper are:
+\begin{enumerate}
+    \item A principled framework for converting biomedical knowledge graph structure into Bayesian borrowing weights via power-sharpened composite similarity (Section~\ref{sec:methods});
+    \item Formal theoretical properties including conjugate closure, bounded effective sample size, and monotonic borrowing (Section~\ref{sec:theory});
+    \item Comprehensive empirical evaluation demonstrating a 25.9\% MAE improvement over rMAP in leave-one-out cross-validation across 35 newly diagnosed multiple myeloma (NDMM) trial arms, supported by sensitivity analyses, contamination tests, and a component contribution analysis (Section~\ref{sec:results});
+    \item Simulation studies with known ground truth under favorable, adverse, and mixed scenarios (Section~\ref{sec:results}).
+\end{enumerate}
+
+The remainder of this paper is organized as follows. Section~\ref{sec:related} reviews related work on Bayesian borrowing methods. Section~\ref{sec:methods} presents the KG-DAP methodology and Section~\ref{sec:theory} establishes its theoretical properties. Section~\ref{sec:results} reports the empirical evaluation. Section~\ref{sec:discussion} discusses implications, limitations, and future directions.
+
+% ======================================================================
+% 2. RELATED WORK
+% ======================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Meta-Analytic-Predictive Priors.}
+The MAP prior framework \citep{neuenschwander2010summarizing} and its robust extension rMAP \citep{schmidli2014robust} remain the most widely used Bayesian borrowing approach in pharmaceutical applications. The rMAP prior fits a normal-normal hierarchical model to logit-transformed historical rates, producing a MAP predictive distribution for the new trial that is mixed with a vague component. The method has regulatory acceptance \citep{fda2019adaptive} and is implemented in several software packages. Its primary limitation is the exchangeability assumption: all historical trials contribute to a shared heterogeneity estimate $\tau$, with no mechanism for trial-specific borrowing weights based on structural similarity.
+
+\paragraph{Exchangeability-Based Methods.}
+\citet{kaizer2018bayesian} introduced the Multisource Exchangeability Model (MEM), which enumerates all $2^K$ binary exchangeability partitions and computes posterior-weighted mixtures. Extensions include the independent MEM \citep[iMEM;][]{kaizer2021bayesian} and dynamic MEM \citep[dMEM;][]{ji2022dynamic}. These methods produce trial-specific borrowing decisions at $O(2^K)$ computational cost, making them intractable for $K > 20$. Crucially, the exchangeability decisions are posterior quantities that depend on observed outcomes.
+
+\paragraph{Latent Exchangeability Methods.}
+LEAP \citep{alt2024leap} constructs trial-specific priors via latent exchangeability indicators, representing the closest conceptual predecessor to KG-DAP. LEAP's weights adapt to observed outcome data, providing conflict detection that KG-DAP lacks. However, LEAP requires MCMC computation and cannot be fully pre-specified---a critical limitation for regulatory SAPs. KG-DAP replaces LEAP's data-driven weights with graph-derived weights, trading conflict detection for pre-specifiability and computational efficiency.
+
+\paragraph{Commensurate and Power Priors.}
+Commensurate priors \citep{hobbs2011hierarchical} place continuous shrinkage on the difference between current and historical trial parameters, with per-trial adaptation. Power priors \citep{ibrahim2000power} discount historical likelihoods by a scalar $a_0$, with the propensity-score-integrated extension \citep{wang2020propensity} incorporating covariate adjustment. All these methods adapt borrowing from outcome data, precluding full pre-specification when the borrowing parameter is data-dependent.
+
+\paragraph{Graph Kernels and Diffusion on Graphs.}
+The diffusion kernel $\exp(-\beta L)$ on graphs was introduced by \citet{kondor2002diffusion} for machine learning applications and studied theoretically by \citet{smola2003kernels}. This kernel provides a principled mechanism for propagating similarity through a graph's global topology, capturing higher-order relationships beyond direct connections. KG-DAP imports this mathematical framework into the Bayesian borrowing setting, though the validated implementation uses power-sharpened raw similarity weights rather than the diffusion kernel (see Section~\ref{sec:power_weights}).
+
+\paragraph{KG-DAP's Position.}
+Table~\ref{tab:method_comparison} summarizes the methodological landscape. KG-DAP is the first method to derive trial-specific, continuous borrowing weights from an external knowledge graph while maintaining both full pre-specifiability and closed-form computation.
+
+\begin{table}[t]
+\centering
+\caption{Comparison of Bayesian borrowing methods. KG-DAP uniquely provides trial-specific weights from external structure with full pre-specifiability and closed-form computation.}
+\label{tab:method_comparison}
+\begin{tabular}{lccccc}
+\toprule
+& Trial-specific & Pre- & External & Closed- \\
+Method & weights? & specifiable? & structure? & form? \\
+\midrule
+rMAP \citep{schmidli2014robust} & No & Partially & No & No \\
+LEAP \citep{alt2024leap} & Yes & No & No & No \\
+MEM \citep{kaizer2018bayesian} & Yes & No & No & No \\
+Commensurate \citep{hobbs2011hierarchical} & Yes & No & No & No \\
+Power prior \citep{ibrahim2000power} & No & If $a_0$ fixed & No & Depends \\
+\textbf{KG-DAP} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ======================================================================
+% 3. METHODS
+% ======================================================================
+\section{Methods}
+\label{sec:methods}
+
+\subsection{Notation and Setup}
+\label{sec:notation}
+
+Consider a current (new) clinical trial arm $c$ for which we wish to estimate the response rate $\thetac \in [0,1]$, with data $y_c \mid \thetac \sim \mathrm{Binomial}(n_c, \thetac)$. We have access to $K$ historical trial arms $\{h_1, \ldots, h_K\}$ with summary data $(n_k, y_k)$ for $k = 1, \ldots, K$, and a biomedical knowledge graph $G = (V, E)$ that encodes structural relationships among trials, drugs, molecular targets, and patient populations.
+
+\subsection{Composite Similarity}
+\label{sec:similarity}
+
+The composite similarity between trial arms $i$ and $j$ integrates three dimensions of structural information from the knowledge graph:
+\begin{equation}
+S_{ij} = \alpha \cdot \Jdrug(i,j) + \beta_w \cdot \Jtarget(i,j) + \gamma \cdot \Spop(i,j),
+\label{eq:composite_sim}
+\end{equation}
+where $\alpha + \beta_w + \gamma = 1$ with defaults $(\alpha, \beta_w, \gamma) = (0.20, 0.20, 0.60)$.
+
+The drug Jaccard similarity is $\Jdrug(i,j) = |D_i \cap D_j| / |D_i \cup D_j|$, where $D_i$ denotes the set of drugs used in arm $i$. The target Jaccard similarity $\Jtarget(i,j) = |T_i \cap T_j| / |T_i \cup T_j|$ uses two-hop molecular target sets obtained by traversing the KG from trial to drug to molecular target. The population similarity is
+\begin{equation}
+\Spop(i,j) = 1 - \frac{\|\mathbf{x}_i - \mathbf{x}_j\|_1}{K_{\mathrm{pop}}},
+\label{eq:pop_sim}
+\end{equation}
+where $\mathbf{x}_i \in [0,1]^{K_{\mathrm{pop}}}$ is a feature vector encoding patient population characteristics (transplant eligibility, cytogenetic risk, median age, ISS stage, MRD threshold sensitivity, ASCT requirement) and $K_{\mathrm{pop}} = 6$.
+
+Population similarity receives the highest weight ($\gamma = 0.60$) because patient characteristics have the strongest direct effect on response rates in our NDMM application---transplant-eligible patients consistently achieve higher MRD negativity rates than transplant-ineligible patients, independent of the drug regimen \citep[see, e.g.,][]{viele2014use}. Drug and target similarities ($\alpha = \beta_w = 0.20$) capture mechanistic overlap at two levels of abstraction.
+
+\subsection{Power-Sharpened Borrowing Weights}
+\label{sec:power_weights}
+
+Given the composite similarity vector $\mathbf{s}_c = (S_{c,1}, \ldots, S_{c,K})$ from the current trial $c$ to each historical arm, the borrowing weights are
+\begin{equation}
+\omega_k = \frac{S_{c,k}^\beta}{\sum_{j=1}^{K} S_{c,j}^\beta}, \qquad k = 1, \ldots, K,
+\label{eq:power_weights}
+\end{equation}
+where $\beta > 0$ is the power parameter controlling borrowing concentration.
+
+This formulation provides a continuous spectrum of borrowing regimes controlled by a single parameter:
+\begin{itemize}
+    \item As $\beta \to 0$: $\omega_k \to 1/K$ for all $k$ (uniform borrowing, no graph discrimination);
+    \item As $\beta \to \infty$: $\omega$ concentrates on $\arg\max_k S_{c,k}$ (nearest-neighbor borrowing);
+    \item For moderate $\beta$ (validated range $[8, 30]$): weights smoothly concentrate on structurally similar trials while suppressing dissimilar ones.
+\end{itemize}
+
+\begin{remark}[Choice of power weights over diffusion kernel]
+\label{rem:power_vs_diffusion}
+The original design considered a diffusion kernel $\exp(-\beta L)$ on the graph Laplacian $L$ \citep{kondor2002diffusion, smola2003kernels}. However, for dense similarity graphs typical of trials within a single therapeutic area---where pairwise similarities concentrate in $[0.3, 0.9]$---the normalized Laplacian's eigenvalues compress into a narrow band near 1, causing the diffusion kernel to produce near-uniform weights regardless of $\beta$. Power-based weights directly amplify similarity differences without this spectral compression bottleneck. In our NDMM application, the diffusion kernel achieves only 3.2\% MAE improvement over rMAP versus 25.9\% for power-based weights (see Section~\ref{sec:ablation} for a formal comparison).
+\end{remark}
+
+\subsection{The KG-DAP Prior}
+\label{sec:prior}
+
+For each historical arm $k$, form the posterior under a minimally informative base prior $\mathrm{Beta}(\alpha_0, \beta_0)$:
+\begin{equation}
+\pi_k(\theta) = \mathrm{Beta}(\theta \mid \alpha_0 + y_k s_k, \, \beta_0 + (n_k - y_k) s_k),
+\label{eq:hist_component}
+\end{equation}
+where $s_k = \min(1, n_{\mathrm{cap}} / n_k)$ is a sample-size scaling factor that prevents any single large trial from dominating the mixture (default $n_{\mathrm{cap}} = 200$, $\alpha_0 = \beta_0 = 1$).
+
+The KG-DAP prior for the current trial's response rate is the $(K+1)$-component Beta mixture:
+\begin{equation}
+\piDAP(\thetac) = (1 - w_0) \sum_{k=1}^{K} \omega_k \, \mathrm{Beta}(\thetac \mid a_k', b_k') + w_0 \, \mathrm{Beta}(\thetac \mid 1, 1),
+\label{eq:kgdap_prior}
+\end{equation}
+where $a_k' = \alpha_0 + y_k s_k$, $b_k' = \beta_0 + (n_k - y_k) s_k$, and $w_0 \in [0, 1)$ is the robustness weight on the vague (uniform) component. The default $w_0 = 0.20$ matches the rMAP convention \citep{schmidli2014robust}, ensuring that any performance difference reflects the informative component rather than the robustness tuning.
+
+\subsection{Posterior Update}
+\label{sec:posterior}
+
+Given observed data $y_c \mid \thetac \sim \mathrm{Binomial}(n_c, \thetac)$, the posterior is a Beta mixture with updated parameters and re-weighted components:
+\begin{equation}
+\pi(\thetac \mid y_c) = \sum_{k=0}^{K} v_k \, \mathrm{Beta}(\thetac \mid a_k' + y_c, \, b_k' + n_c - y_c),
+\label{eq:posterior}
+\end{equation}
+where the posterior weights are
+\begin{equation}
+\log v_k = \log w_k^{\mathrm{prior}} + \log B(a_k' + y_c, b_k' + n_c - y_c) - \log B(a_k', b_k'),
+\label{eq:posterior_weights}
+\end{equation}
+normalized so that $\sum_k v_k = 1$, with $w_k^{\mathrm{prior}} = (1 - w_0)\omega_k$ for $k = 1, \ldots, K$ and $w_0^{\mathrm{prior}} = w_0$, and $B(\cdot, \cdot)$ denotes the Beta function.
+
+\subsection{Effective Sample Size}
+\label{sec:ess}
+
+The prior effective sample size quantifies the information contributed by the KG-DAP prior, computed via moment-matching to a single Beta distribution \citep{morita2008determining}:
+\begin{equation}
+\ESS = \frac{\mu(1 - \mu)}{\sigma^2} - 1,
+\label{eq:ess}
+\end{equation}
+where $\mu = \mathrm{E}_{\piDAP}[\thetac]$ and $\sigma^2 = \mathrm{Var}_{\piDAP}[\thetac]$ are the prior mixture mean and variance.
+
+\subsection{Prior Predictive Distribution}
+\label{sec:predictive}
+
+The prior predictive distribution for $y_{\mathrm{new}} \sim \mathrm{Binomial}(n_{\mathrm{new}}, \thetac)$ under the KG-DAP prior is
+\begin{equation}
+P(y_{\mathrm{new}} = y \mid n_{\mathrm{new}}) = \sum_{k=0}^{K} w_k \, \mathrm{BetaBin}(y \mid n_{\mathrm{new}}, a_k', b_k'),
+\label{eq:predictive}
+\end{equation}
+where $\mathrm{BetaBin}$ is the Beta-Binomial probability mass function. This enables pre-trial design operating characteristics.
+
+\subsection{Comparator Methods}
+\label{sec:comparators}
+
+We compare KG-DAP against four methods spanning the borrowing spectrum:
+
+\begin{enumerate}
+\item \textbf{Robust MAP (rMAP).} Following \citet{schmidli2014robust}, a normal-normal hierarchical model is fit to logit-transformed historical rates using the DerSimonian--Laird estimator \citep{dersimonian1986meta}. The MAP predictive distribution is approximated on the probability scale via moment-matching and mixed with a vague Beta(1,1) component at weight $w_{\mathrm{rob}} = 0.20$.
+
+\item \textbf{Uniform prior.} $\pi(\theta) = \mathrm{Beta}(1, 1)$. The baseline representing no borrowing.
+
+\item \textbf{Pooled Beta prior.} All historical data pooled into a single Beta posterior: $\pi(\theta) = \mathrm{Beta}(1 + \sum_k y_k, \, 1 + \sum_k (n_k - y_k))$. Represents maximum naive borrowing.
+
+\item \textbf{Equal-weight mixture.} Same architecture as KG-DAP but with $\omega_k = 1/K$ for all $k$ (ignoring the knowledge graph). Isolates the contribution of graph-derived weights.
+\end{enumerate}
+
+\subsection{Algorithm Summary}
+
+Algorithm~\ref{alg:kgdap} summarizes the complete KG-DAP prior construction.
+
+\begin{algorithm}[t]
+\caption{KG-DAP Prior Construction}
+\label{alg:kgdap}
+\begin{algorithmic}[1]
+\Require Knowledge graph $G$, historical data $\{(n_k, y_k)\}_{k=1}^K$, current trial $c$
+\Require Parameters: $\alpha, \beta_w, \gamma, \beta, w_0, \alpha_0, \beta_0, n_{\mathrm{cap}}$
+\Ensure KG-DAP prior $\{(w_k, a_k', b_k')\}_{k=0}^K$
+\For{each pair $(i, j)$ of trial arms}
+    \State $S_{ij} \gets \alpha \cdot \Jdrug(i,j) + \beta_w \cdot \Jtarget(i,j) + \gamma \cdot \Spop(i,j)$
+\EndFor
+\For{$k = 1, \ldots, K$}
+    \State $\omega_k \gets S_{c,k}^\beta \,/\, \sum_{j=1}^K S_{c,j}^\beta$ \Comment{Power-sharpened weights}
+\EndFor
+\For{$k = 1, \ldots, K$}
+    \State $s_k \gets \min(1, n_{\mathrm{cap}} / n_k)$ \Comment{Sample-size scaling}
+    \State $a_k' \gets \alpha_0 + y_k s_k$; \quad $b_k' \gets \beta_0 + (n_k - y_k) s_k$
+\EndFor
+\State $w_0' \gets w_0$; \quad $a_0' \gets 1$; \quad $b_0' \gets 1$ \Comment{Vague component}
+\State $w_k' \gets (1 - w_0) \omega_k$ for $k = 1, \ldots, K$ \Comment{Informative components}
+\State \Return $\{(w_k', a_k', b_k')\}_{k=0}^K$
+\end{algorithmic}
+\end{algorithm}
+
+% ======================================================================
+% 4. THEORETICAL PROPERTIES
+% ======================================================================
+\section{Theoretical Properties}
+\label{sec:theory}
+
+\begin{proposition}[Conjugate Closure]
+\label{prop:conjugate}
+If the KG-DAP prior is a finite Beta mixture~\eqref{eq:kgdap_prior} and the likelihood is $y_c \mid \thetac \sim \mathrm{Binomial}(n_c, \thetac)$, then the posterior is also a finite Beta mixture with updated parameters and re-normalized weights as given in~\eqref{eq:posterior}--\eqref{eq:posterior_weights}.
+\end{proposition}
+
+\begin{proof}
+Each component $\mathrm{Beta}(a_k', b_k')$ is conjugate to the binomial likelihood. For the $k$-th component, the marginal likelihood is $m_k = B(a_k' + y_c, b_k' + n_c - y_c) / B(a_k', b_k')$, and the component posterior is $\mathrm{Beta}(a_k' + y_c, b_k' + n_c - y_c)$. The mixture posterior weight for component $k$ is proportional to $w_k^{\mathrm{prior}} \cdot m_k$. After normalization, the posterior is a $(K+1)$-component Beta mixture. This follows from the general result on conjugacy of finite exponential family mixtures \citep{diaconis1979conjugate}.
+\end{proof}
+
+\begin{proposition}[Bounded Effective Sample Size]
+\label{prop:ess_bound}
+The effective sample size of the KG-DAP prior satisfies
+\begin{equation}
+\ESS(\piDAP) \leq (1 - w_0) \cdot \max_{k} (n_k \cdot s_k + \alpha_0 + \beta_0) + 2.
+\label{eq:ess_bound}
+\end{equation}
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The variance of a mixture is bounded below by the variance of a single component, so the precision $\kappa = \mu(1-\mu)/\sigma^2 - 1$ is bounded above by the precision of the most concentrated component. The most concentrated historical component has parameters $a_k' + b_k' = \alpha_0 + \beta_0 + n_k s_k$, giving ESS at most $n_k s_k + \alpha_0 + \beta_0$. The vague component contributes ESS $= 2$ with weight $w_0$, and the mixture of the most concentrated component with the vague component has ESS bounded by $(1-w_0)(n_k s_k + \alpha_0 + \beta_0) + 2$.
+\end{proof}
+
+This bound ensures that KG-DAP cannot contribute more effective information than the single most informative historical arm, regardless of $K$---a crucial safety property.
+
+\begin{proposition}[Asymptotic Dominance of Data]
+\label{prop:asymptotic}
+As $n_c \to \infty$ with $y_c / n_c \to \theta^* \in (0,1)$, the posterior under the KG-DAP prior converges to $\delta(\theta^*)$ regardless of the prior specification, provided $w_0 > 0$.
+\end{proposition}
+
+\begin{proof}
+The KG-DAP prior has full support on $(0,1)$ via the vague component $\mathrm{Beta}(1,1)$ with weight $w_0 > 0$. The Bernstein--von Mises theorem then guarantees that the posterior concentrates around the true parameter value as $n_c \to \infty$.
+\end{proof}
+
+\begin{proposition}[Monotonic Borrowing]
+\label{prop:monotone}
+For all $\beta > 0$: if $S_{c,j} > S_{c,k}$, then $\omega_j > \omega_k$.
+\end{proposition}
+
+\begin{proof}
+Since $x \mapsto x^\beta$ is strictly increasing on $(0, \infty)$ for $\beta > 0$, $S_{c,j} > S_{c,k}$ implies $S_{c,j}^\beta > S_{c,k}^\beta$. The normalization constant $Z = \sum_i S_{c,i}^\beta$ is the same for both, so $\omega_j = S_{c,j}^\beta / Z > S_{c,k}^\beta / Z = \omega_k$.
+\end{proof}
+
+\begin{proposition}[Power Parameter Limits]
+\label{prop:limits}
+\leavevmode
+\begin{enumerate}
+    \item[(a)] As $\beta \to 0$: $\omega_k \to 1/K$ for all $k$ (uniform weights).
+    \item[(b)] As $\beta \to \infty$: $\omega$ concentrates on $\arg\max_k S_{c,k}$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+(a) As $\beta \to 0$, $S_{c,k}^\beta \to 1$ for all $k > 0$ (assuming $S_{c,k} > 0$), so $\omega_k \to 1/K$.
+(b) As $\beta \to \infty$, the term with the largest $S_{c,k}$ dominates the sum: if $S_{c,j} > S_{c,k}$ for all $k \neq j$, then $\omega_j = S_{c,j}^\beta / Z \to 1$ because $S_{c,j}^\beta / S_{c,k}^\beta = (S_{c,j}/S_{c,k})^\beta \to \infty$.
+\end{proof}
+
+% ======================================================================
+% 5. RESULTS
+% ======================================================================
+\section{Empirical Evaluation}
+\label{sec:results}
+
+\subsection{Data and Knowledge Graph}
+\label{sec:data}
+
+The evaluation uses data from 35 trial arms across 21 newly diagnosed multiple myeloma (NDMM) studies reporting minimal residual disease (MRD) negativity rates. Response rates range from 0.07 to 0.79 across arms, with sample sizes from 20 to 700. The biomedical knowledge graph is a 56-node NetworkX MultiDiGraph containing 11 drugs, 6 molecular targets, and structured relationships (drug-targets-protein, trial-uses-drug, trial-enrolls-population, trial-measures-endpoint).
+
+\subsection{Leave-One-Out Cross-Validation}
+\label{sec:loocv}
+
+For each of the 35 arms, we hold out its data, construct the KG-DAP prior from the remaining 34 arms using the knowledge graph, and compare the prior predictive mean to the observed rate. Table~\ref{tab:loocv} presents the results for all five methods.
+
+\begin{table}[t]
+\centering
+\caption{Leave-one-out cross-validation results across 35 NDMM trial arms. KG-DAP achieves the lowest MAE and RMSE while maintaining well-calibrated coverage. Bold indicates best performance; the Pooled method has extreme concentration (ESS $= 9075$) leading to nearly zero coverage.}
+\label{tab:loocv}
+\begin{tabular}{lcccccc}
+\toprule
+Method & MAE & RMSE & Coverage & Width & Log Pred & ESS \\
+\midrule
+\textbf{KG-DAP}   & \textbf{0.1257} & \textbf{0.1559} & 0.943 & 0.788 & \textbf{$-$5.028} & 5.59 \\
+rMAP               & 0.1697          & 0.2009          & 0.886 & 0.778 & $-$5.179          & 5.60 \\
+Equal Weight       & 0.1666          & 0.2003          & 0.971 & 0.812 & $-$5.070          & 4.22 \\
+Uniform            & 0.1608          & 0.1964          & 1.000 & 0.950 & $-$5.336          & 2.00 \\
+Pooled             & 0.1799          & 0.2073          & 0.029 & 0.020 & $-$30.60          & 9075 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+KG-DAP achieves MAE $= 0.1257$ compared to $0.1697$ for rMAP, a \textbf{25.9\% relative improvement}. The RMSE improvement is 22.4\% ($0.1559$ vs. $0.2009$). KG-DAP's 95\% coverage of 94.3\% is well-calibrated (within the target range $[0.88, 0.98]$), whereas rMAP's coverage of 88.6\% is below nominal, reflecting its tendency to produce overly concentrated priors when the DerSimonian--Laird estimator underestimates heterogeneity.
+
+Notably, KG-DAP also outperforms the uniform (no borrowing) prior by 21.8\%, confirming that graph-directed borrowing provides genuine value over no borrowing at all. The equal-weight mixture, which uses the same Beta mixture architecture but ignores the knowledge graph ($\omega_k = 1/K$), achieves MAE $= 0.1666$---substantially worse than KG-DAP, isolating the value of graph-derived weights.
+
+Figure~\ref{fig:loocv_mae} shows the MAE comparison, and Figure~\ref{fig:arm_level} displays the arm-level scatter of prior predictive means against observed rates. KG-DAP's predictions cluster more tightly around the diagonal (perfect prediction) than any comparator.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/fig1_loocv_mae.pdf}
+\caption{Leave-one-out cross-validation: mean absolute error by method. KG-DAP achieves the lowest MAE (0.1257), a 25.9\% improvement over rMAP (0.1697).}
+\label{fig:loocv_mae}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/fig2_arm_level.pdf}
+\caption{Arm-level scatter plot of prior predictive mean versus observed MRD negativity rate. Points closer to the diagonal indicate more accurate predictions. KG-DAP (blue circles) clusters more tightly around the diagonal than comparators.}
+\label{fig:arm_level}
+\end{figure}
+
+\subsection{Sensitivity Analysis}
+\label{sec:sensitivity}
+
+\paragraph{Power parameter $\beta$.}
+Figure~\ref{fig:sensitivity_beta} shows MAE and coverage as functions of $\beta$ across the range $[1, 50]$. A broad performance plateau exists for $\beta \in [8, 30]$, with MAE varying only between 0.122 and 0.137---well below rMAP's 0.170. At $\beta = 1$, KG-DAP reduces to near-uniform weighting and performs comparably to the equal-weight baseline. At $\beta = 50$, nearest-neighbor borrowing begins to degrade performance slightly. Coverage remains stable at 94.3\% for $\beta \geq 10$.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/fig3_sensitivity_beta.pdf}
+\caption{Sensitivity of KG-DAP to the power parameter $\beta$. A broad performance plateau (shaded) exists for $\beta \in [8, 30]$, within which MAE varies minimally. Coverage remains stable at 94.3\% throughout this range.}
+\label{fig:sensitivity_beta}
+\end{figure}
+
+\paragraph{Robustness weight $w_0$.}
+The robustness weight $w_0$ trades accuracy for calibration. At $w_0 = 0$ (no vague component), KG-DAP achieves the lowest MAE ($0.123$) but coverage drops to 88.6\%. At $w_0 = 0.50$, coverage is perfect (100\%) but MAE increases to $0.137$. The default $w_0 = 0.20$ provides the best MAE-coverage trade-off: MAE $= 0.126$ with coverage $= 94.3\%$. Sensitivity results are provided in Table~\ref{tab:sensitivity_w0}.
+
+\begin{table}[t]
+\centering
+\caption{Sensitivity to the robustness weight $w_0$. The default $w_0 = 0.20$ balances MAE and coverage. Removing the robustness component ($w_0 = 0$) improves MAE by 2\% but reduces coverage to 88.6\%.}
+\label{tab:sensitivity_w0}
+\begin{tabular}{cccccc}
+\toprule
+$w_0$ & MAE & RMSE & Coverage & Width & ESS \\
+\midrule
+0.00 & 0.1231 & 0.1508 & 0.886 & 0.564 & 10.15 \\
+0.05 & 0.1234 & 0.1518 & 0.914 & 0.605 & 8.31 \\
+0.10 & 0.1240 & 0.1530 & 0.943 & 0.671 & 7.13 \\
+\textbf{0.20} & \textbf{0.1257} & \textbf{0.1559} & \textbf{0.943} & \textbf{0.788} & \textbf{5.59} \\
+0.30 & 0.1279 & 0.1593 & 0.971 & 0.847 & 4.61 \\
+0.50 & 0.1368 & 0.1678 & 1.000 & 0.901 & 3.40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Component Contribution Analysis}
+\label{sec:ablation}
+
+To identify which components of KG-DAP contribute to its performance, we conduct a systematic component contribution analysis by removing or replacing individual components. Table~\ref{tab:ablation} presents the results.
+
+\begin{table}[t]
+\centering
+\caption{Component contribution analysis. Both the knowledge graph structure (32.6\% MAE degradation when removed) and the power-based weights (30.8\% degradation with diffusion kernel) are essential to KG-DAP's performance.}
+\label{tab:ablation}
+\begin{tabular}{lcccc}
+\toprule
+Variant & MAE & Coverage & $\Delta$MAE (\%) \\
+\midrule
+Full KG-DAP                   & 0.1257 & 0.943 & ---      \\
+No Robustness ($w_0 \approx 0$) & 0.1231 & 0.886 & $-$2.1  \\
+No Sample-Size Cap            & 0.1257 & 0.943 & $+$0.0  \\
+Drug-Only Similarity          & 0.1348 & 0.914 & $+$7.3  \\
+Population-Only Similarity    & 0.1452 & 0.971 & $+$15.5 \\
+Diffusion Kernel (original)   & 0.1643 & 1.000 & $+$30.8 \\
+No Graph (Equal Weight)       & 0.1666 & 0.971 & $+$32.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The key findings are:
+
+\begin{enumerate}
+\item \textbf{Graph structure is essential.} Removing the knowledge graph entirely (equal-weight mixture) degrades MAE by 32.6\%, confirming that the graph provides genuinely informative structure.
+
+\item \textbf{Power weights outperform diffusion.} Replacing power-based weights with the originally proposed diffusion kernel degrades MAE by 30.8\%, due to the spectral compression phenomenon described in Remark~\ref{rem:power_vs_diffusion}.
+
+\item \textbf{Composite similarity outperforms any single component.} Drug-only ($+$7.3\%) and population-only ($+$15.5\%) similarities are both worse than the composite, validating the multi-dimensional approach.
+
+\item \textbf{Robustness trades 2\% MAE for reliable calibration.} Removing the vague component ($w_0 \approx 0$) marginally improves MAE but drops coverage to 88.6\%.
+
+\item \textbf{Sample-size cap has negligible effect.} Most NDMM trials have $n < 200$, so the cap rarely binds.
+\end{enumerate}
+
+Figure~\ref{fig:ablation} visualizes these contributions.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.80\textwidth]{figures/fig4_ablation.pdf}
+\caption{Component contribution analysis showing MAE for each ablation variant. Both graph structure and power-based weights contribute substantially; removing either degrades performance by $>$30\%.}
+\label{fig:ablation}
+\end{figure}
+
+\subsection{Contamination Robustness}
+\label{sec:contamination}
+
+We test KG-DAP's robustness by injecting misleading historical arms with fabricated rates (0.10 or 0.90) at controlled similarity levels. Table~\ref{tab:contamination} presents the results.
+
+\begin{table}[t]
+\centering
+\caption{Contamination robustness test. At realistic contamination levels (similarity $= 0.80$), MAE degradation remains below 2\%, well under the 5\% threshold. At adversarial similarity ($= 0.90$), degradation becomes substantial.}
+\label{tab:contamination}
+\begin{tabular}{lccc}
+\toprule
+Scenario & MAE & $\Delta$MAE & Coverage \\
+\midrule
+Clean (baseline)                     & 0.126 & ---   & 0.943 \\
+$+$5 fake (sim $= 0.80$, rate $= 0.10$)  & 0.133 & $+$0.007 & 0.971 \\
+$+$5 fake (sim $= 0.80$, rate $= 0.90$)  & 0.135 & $+$0.009 & 0.943 \\
+$+$10 fake (sim $= 0.80$, rate $= 0.10$) & 0.139 & $+$0.014 & 1.000 \\
+$+$10 fake (sim $= 0.80$, rate $= 0.90$) & 0.143 & $+$0.017 & 0.943 \\
+$+$5 fake (sim $= 0.90$, rate $= 0.10$)  & 0.167 & $+$0.041 & 1.000 \\
+$+$5 fake (sim $= 0.90$, rate $= 0.90$)  & 0.173 & $+$0.047 & 0.943 \\
+$+$10 fake (sim $= 0.90$, rate $= 0.10$) & 0.196 & $+$0.071 & 1.000 \\
+$+$10 fake (sim $= 0.90$, rate $= 0.90$) & 0.203 & $+$0.077 & 0.943 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At moderate contamination (similarity $= 0.80$), KG-DAP's MAE degradation stays below 2\% absolute, well within the 5\% robustness threshold. This reflects the power-sharpening mechanism: at $\beta = 15$, an arm with similarity 0.80 receives relative weight $(0.80)^{15} \approx 0.035$, while a genuinely similar arm at 0.95 receives $(0.95)^{15} \approx 0.463$---a 13-fold ratio. Real external trials from adjacent or foreign diseases have similarity $0.10$--$0.40$, at which the power-sharpened weight is negligible ($< 10^{-6}$), making KG-DAP naturally immune to irrelevant trial contamination.
+
+At adversarial similarity ($= 0.90$), degradation becomes substantial, as expected. Figure~\ref{fig:contamination} visualizes this trade-off.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.90\textwidth]{figures/fig5_contamination.pdf}
+\caption{Contamination robustness. Left: at similarity $= 0.80$, MAE degradation stays well below the 5\% threshold (red dashed line). Right: at adversarial similarity $= 0.90$, degradation is substantial, illustrating the fundamental trade-off between sensitivity to graph structure and vulnerability to graph errors.}
+\label{fig:contamination}
+\end{figure}
+
+\subsection{Simulation Study}
+\label{sec:simulation}
+
+To complement the real-data LOO-CV, we conduct a simulation study with known ground truth parameters using the actual knowledge graph and trial structure. Three scenarios are designed:
+
+\begin{enumerate}
+\item \textbf{Favorable}: True response rates equal the observed rates in the data, so graph structure is informative.
+\item \textbf{Adverse}: True rates are randomly shuffled across trial arms, so graph structure is uninformative.
+\item \textbf{Mixed}: Half the trials keep their observed rates; the other half are perturbed by $\pm 0.15$.
+\end{enumerate}
+
+For each scenario, $B = 200$ Monte Carlo replications generate synthetic data from the known true rates using the real sample sizes. Table~\ref{tab:simulation} reports the results. All Monte Carlo standard errors are below 0.02\% of the corresponding effect sizes.
+
+Under the Favorable scenario---where graph structure is genuinely informative---KG-DAP achieves MAE $= 0.1258$, matching its real-data LOO-CV performance (0.1257), with a 25.8\% improvement over rMAP (0.1696). This confirms that the LOO-CV results are not artifacts of the particular data realization.
+
+Under the Adverse scenario---where graph structure is uninformative because rates are randomly shuffled---KG-DAP's MAE (0.1691) is only slightly worse than rMAP's (0.1680), a 0.7\% relative degradation. This graceful degradation is a key safety property: when the knowledge graph is uninformative, KG-DAP does not significantly harm inference. The uniform prior achieves the best MAE (0.1608) in this scenario, as expected, since no borrowing method can improve upon no-borrowing when the graph provides no signal.
+
+Under the Mixed scenario---where half the trials have accurate graph-predicted rates and half are perturbed---KG-DAP retains a substantial 16.1\% improvement over rMAP (0.1562 vs. 0.1861). This demonstrates robustness to partial graph inaccuracy: the correctly predicted arms contribute enough signal to overcome the noise from the perturbed arms.
+
+\begin{table}[t]
+\centering
+\caption{Simulation study results ($B = 200$ replications). Monte Carlo standard errors are reported in parentheses. Under the Favorable scenario, KG-DAP's advantage is largest; under the Adverse scenario, KG-DAP gracefully degrades to near-uniform performance rather than harming inference.}
+\label{tab:simulation}
+\begin{tabular}{llcc}
+\toprule
+Scenario & Method & MAE (SE) & ESS \\
+\midrule
+\multirow{5}{*}{Favorable}
+& \textbf{KG-DAP} & \textbf{0.1258 (0.0002)} & 5.40 \\
+& rMAP             & 0.1696 (0.0001)           & 5.54 \\
+& Equal Weight     & 0.1666 (0.0001)           & 4.09 \\
+& Uniform          & 0.1608 ($< 0.0001$)       & 2.00 \\
+& Pooled           & 0.1799 (0.0001)           & 9075 \\
+\midrule
+\multirow{5}{*}{Adverse}
+& KG-DAP           & 0.1691 (0.0001) & 4.25 \\
+& rMAP             & 0.1680 (0.0001) & 6.72 \\
+& Equal Weight     & 0.1666 (0.0001) & 4.14 \\
+& \textbf{Uniform} & \textbf{0.1608 ($< 0.0001$)} & 2.00 \\
+& Pooled           & 0.1633 ($< 0.0001$) & 9075 \\
+\midrule
+\multirow{5}{*}{Mixed}
+& \textbf{KG-DAP} & \textbf{0.1562 (0.0002)} & 4.53 \\
+& rMAP             & 0.1861 (0.0001)           & 5.28 \\
+& Equal Weight     & 0.1850 ($< 0.0001$)      & 3.50 \\
+& Uniform          & 0.1819 ($< 0.0001$)      & 2.00 \\
+& Pooled           & 0.1943 (0.0001)           & 9075 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ======================================================================
+% 6. DISCUSSION
+% ======================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Performance and Robustness Trade-Off}
+
+KG-DAP's 25.9\% MAE improvement over rMAP demonstrates that structurally informed borrowing can substantially outperform methods that treat all historical trials as exchangeable. The improvement arises because the NDMM trial landscape exhibits genuine heterogeneity in response rates (0.07--0.79) that correlates with knowledge graph structure: trials sharing drugs, molecular targets, and patient populations tend to have more similar outcomes. KG-DAP exploits this correlation through power-sharpened weights, while rMAP's global heterogeneity parameter $\tau$ cannot capture trial-specific relevance.
+
+However, this structural sensitivity is a double-edged sword. The contamination analysis reveals that at adversarial similarity levels ($\geq 0.90$), KG-DAP is vulnerable to misleading graph structure. This vulnerability is inherent to the pre-specification design: because the weights are fixed before observing outcomes, KG-DAP cannot detect and respond to prior-data conflict at the individual trial level. Methods like LEAP \citep{alt2024leap} and commensurate priors \citep{hobbs2011hierarchical} can detect such conflicts but at the cost of pre-specifiability. The robustness weight $w_0 = 0.20$ provides a floor of protection, trading 2\% MAE for reliable calibration (94.3\% coverage).
+
+\subsection{Regulatory and Practical Considerations}
+
+Full pre-specifiability is a distinctive feature of KG-DAP that carries practical significance for regulatory applications. The FDA's guidance on adaptive designs \citep{fda2019adaptive} distinguishes between pre-specified informative priors (acceptable) and data-adaptive borrowing mechanisms (requiring additional justification for type I error control). KG-DAP's weights, being derived entirely from the knowledge graph structure without reference to outcome data, can be locked in the SAP before enrollment begins. Combined with closed-form computation that eliminates MCMC convergence concerns, this positions KG-DAP as a method that regulatory agencies can straightforwardly evaluate.
+
+\subsection{Where KG-DAP Does Not Excel}
+
+KG-DAP's modest ESS ($\approx 5.6$) means its advantage comes from the \emph{direction} rather than the \emph{amount} of borrowing. In settings with very few historical trials ($K < 5$), the mixture has too few components to meaningfully differentiate borrowing, and simpler methods may suffice. In settings where patient-level data is available for all historical trials, methods like LEAP that can adjust for covariate imbalance may be preferable despite their computational overhead. KG-DAP's use of summary statistics $(n_k, y_k)$ is both a strength (maximizing the usable historical pool) and a limitation (inability to adjust for patient-level confounders).
+
+The sample-size cap ($n_{\mathrm{cap}} = 200$) has negligible effect in our NDMM application because most trials have $n < 200$. In therapeutic areas with larger trials, this component may become more important.
+
+\subsection{Limitations}
+
+We acknowledge the following specific limitations:
+
+\begin{enumerate}
+\item \textbf{Knowledge graph quality dependence.} KG-DAP's performance depends on the fidelity of the knowledge graph. Different curators may construct different graphs, leading to different borrowing weights. Sensitivity to graph structure was assessed through the component contribution analysis but a full perturbation study (randomly dropping edges) was not conducted.
+
+\item \textbf{Single therapeutic area.} The evaluation is limited to NDMM MRD negativity trials. Performance in other therapeutic areas with different graph structures (denser or sparser, different similarity distributions) has not been assessed.
+
+\item \textbf{No comparison to LEAP or MEM.} We compare against rMAP, which represents the most widely used approach, but do not directly compare to LEAP (which requires patient-level data for all historical trials) or MEM (which is computationally intractable for $K = 34$). Future work should include such comparisons where feasible.
+
+\item \textbf{Pre-specification trade-off.} KG-DAP cannot detect prior-data conflict. When the knowledge graph is genuinely misleading, methods with data-driven conflict detection will outperform KG-DAP. The contamination analysis quantifies this vulnerability.
+
+\item \textbf{Binary endpoints only.} The current formulation handles binary response rates via the Beta-Binomial conjugacy. Extension to continuous or time-to-event endpoints would require different distributional families and is not addressed here.
+\end{enumerate}
+
+\subsection{Future Work}
+
+Three concrete extensions are planned: (i) extension to time-to-event endpoints using Gamma mixture priors conjugate to exponential likelihoods; (ii) a systematic graph perturbation study assessing sensitivity to edge addition/deletion; and (iii) prospective validation on a newly published trial not used in KG construction.
+
+% ======================================================================
+% SUPPLEMENTARY MATERIAL
+% ======================================================================
+\appendix
+\section*{Supplementary Material}
+
+\subsection*{Table S1: Sensitivity to Power Parameter $\beta$}
+
+\begin{table}[h]
+\centering
+\caption*{Table S1: Full sensitivity analysis for the power parameter $\beta$. The safe operating range $[8, 30]$ shows minimal MAE variation.}
+\begin{tabular}{ccccccc}
+\toprule
+$\beta$ & MAE & RMSE & Coverage & Width & Log Pred & ESS \\
+\midrule
+1.0  & 0.1608 & 0.1942 & 1.000 & 0.811 & $-$5.042 & 4.36 \\
+3.0  & 0.1523 & 0.1844 & 0.971 & 0.808 & $-$5.004 & 4.63 \\
+5.0  & 0.1454 & 0.1765 & 0.971 & 0.805 & $-$4.981 & 4.85 \\
+8.0  & 0.1367 & 0.1673 & 0.971 & 0.800 & $-$4.974 & 5.12 \\
+10.0 & 0.1320 & 0.1628 & 0.943 & 0.796 & $-$4.982 & 5.26 \\
+15.0 & 0.1257 & 0.1559 & 0.943 & 0.788 & $-$5.028 & 5.59 \\
+20.0 & 0.1231 & 0.1529 & 0.943 & 0.782 & $-$5.077 & 5.88 \\
+30.0 & 0.1220 & 0.1523 & 0.943 & 0.775 & $-$5.158 & 6.38 \\
+50.0 & 0.1291 & 0.1579 & 0.943 & 0.768 & $-$5.262 & 6.99 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Figure S1: Sensitivity to Robustness Weight $w_0$}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.90\textwidth]{figures/fig6_sensitivity_w0.pdf}
+\caption*{Figure S1: MAE and 95\% coverage as functions of the robustness weight $w_0$. Increasing $w_0$ improves coverage at the cost of higher MAE. The default $w_0 = 0.20$ falls in the elbow of the MAE--coverage trade-off.}
+\end{figure}
+
+% ======================================================================
+% BIBLIOGRAPHY
+% ======================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

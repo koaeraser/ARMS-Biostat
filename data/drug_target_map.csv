@@ -1,0 +1,12 @@
+drug_name,drug_class,targets,mechanism
+elotuzumab,mAb,SLAMF7,Anti-SLAMF7 monoclonal antibody; activates NK cells
+carfilzomib,PI,PSMB5 (20S proteasome),Irreversible proteasome inhibitor
+bortezomib,PI,PSMB5 (20S proteasome),Reversible proteasome inhibitor
+lenalidomide,IMiD,CRBN (cereblon),Immunomodulatory drug; cereblon E3 ligase modulator
+pomalidomide,IMiD,CRBN (cereblon),Immunomodulatory drug; next-gen cereblon modulator
+thalidomide,IMiD,CRBN (cereblon),Immunomodulatory drug; first-gen cereblon binder
+dexamethasone,steroid,GR (glucocorticoid receptor),Corticosteroid; anti-inflammatory and pro-apoptotic
+prednisone,steroid,GR (glucocorticoid receptor),Corticosteroid
+daratumumab,mAb,CD38,Anti-CD38 monoclonal antibody
+isatuximab,mAb,CD38,Anti-CD38 monoclonal antibody (binds distinct epitope from daratumumab)
+melphalan,alkylator,DNA,Nitrogen mustard alkylating agent
