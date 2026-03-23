@@ -184,10 +184,9 @@ Two papers were produced from the **same research brief and corrected dataset**,
 |  | Fully Autonomous | Human-Revised |
 |--|-----------------|---------------|
 | Method discovered | KG-DAP (Beta mixture) | KG-CAR (spatial CAR) |
-| Time | 3h 14min | ~3 weeks |
+| Time | ~3h | ~3h + ~6h human revision |
 | Human effort | 0 | ~6 hours |
 | Independent score | 38/50 (B) | 39/50 (B) |
-| Real-data advantage | 25.9% MAE over rMAP | 5.9% MSE over rMAP |
 
 Neither method was prescribed in the brief. The pipeline independently discovered a different approach each time it ran. See [`case-studies/README.md`](case-studies/README.md) for detailed comparison.
 

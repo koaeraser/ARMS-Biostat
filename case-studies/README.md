@@ -8,10 +8,9 @@ Two papers were produced from the same research brief and corrected dataset (35 
 |--|---------------------|------------------|
 | **Method** | KG-DAP (Beta mixture + power-sharpened KG weights) | KG-CAR (Leroux CAR prior + BYM decomposition) |
 | **Workflow** | `/research-pipeline` end-to-end, zero human input | ~13 AI sessions + ~6h human revision |
-| **Duration** | 3h 14min | ~3 weeks (iterative) |
+| **Duration** | ~3h | ~3h + ~6h human revision |
 | **Self-graded score** | 42/50 (Grade A) | 42/50 (Grade A) |
 | **Independent score** | 38/50 (Grade B) | 39/50 (Grade B) |
-| **Real-data advantage** | 25.9% MAE over rMAP | 5.9% MSE over rMAP |
 | **Coverage** | 94.3% | 88.6% |
 | **Theory depth** | 4 propositions, simple proofs | 2 propositions + 2 remarks, deeper proofs |
 | **Comparators** | 4 methods | 6 methods |
